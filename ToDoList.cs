@@ -7,21 +7,26 @@ namespace ToDoList
 {
     public class ToDoList : IToDoList
     {
-        private Dictionary<int, Entry> _notes = new Dictionary<int, Entry>();
-
-        private readonly SortedDictionary<long, List<Command>> _commandsByTimestamps =
-            new SortedDictionary<long, List<Command>>();
-
-        private readonly HashSet<int> _bannedUsers = new HashSet<int>();
-        private readonly HashSet<int> _removedNotes = new HashSet<int>();
+        private readonly SortedDictionary<long, List<Command>> commandsByTimestamps;
+        private Dictionary<int, Entry> notes;
+        private readonly HashSet<int> bannedUsers;
+        private readonly HashSet<int> removedNotes;
 
         public int Count
         {
             get
             {
                 UpdateNotes();
-                return _notes.Count;
+                return notes.Count;
             }
+        }
+
+        public ToDoList()
+        {
+            commandsByTimestamps = new SortedDictionary<long, List<Command>>();
+            notes = new Dictionary<int, Entry>();
+            bannedUsers = new HashSet<int>();
+            removedNotes = new HashSet<int>();
         }
 
         public void AddEntry(int entryId, int userId, string name, long timestamp)
@@ -46,53 +51,50 @@ namespace ToDoList
 
         public void DismissUser(int userId)
         {
-            _bannedUsers.Add(userId);
+            bannedUsers.Add(userId);
         }
 
         public void AllowUser(int userId)
         {
-            if (_bannedUsers.Contains(userId))
+            if (bannedUsers.Contains(userId))
             {
-                _bannedUsers.Remove(userId);
+                bannedUsers.Remove(userId);
             }
         }
 
         public IEnumerator<Entry> GetEnumerator()
         {
             UpdateNotes();
-            return _notes.Values.GetEnumerator();
+            return notes.Values.GetEnumerator();
         }
 
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return GetEnumerator();
-        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
         private void AddCommand(long timestamp, Command command)
         {
-            if (_commandsByTimestamps.ContainsKey(timestamp))
+            if (commandsByTimestamps.ContainsKey(timestamp))
             {
                 ResolveConflict(timestamp, command);
             }
             else
             {
-                _commandsByTimestamps.Add(timestamp, new List<Command> {command});
+                commandsByTimestamps.Add(timestamp, new List<Command> {command});
             }
         }
 
         private void ResolveConflict(long timestamp, Command newCommand)
         {
-            var oldCommand = _commandsByTimestamps[timestamp].Last(x => x.EntryId == newCommand.EntryId);
+            var oldCommand = commandsByTimestamps[timestamp].Last(x => x.EntryId == newCommand.EntryId);
             if (oldCommand == null)
             {
-                _commandsByTimestamps[timestamp].Add(newCommand);
+                commandsByTimestamps[timestamp].Add(newCommand);
                 return;
             }
 
             if (newCommand.Action == oldCommand.Action && newCommand.UserId < oldCommand.UserId)
             {
-                _commandsByTimestamps[timestamp].Remove(oldCommand);
-                _commandsByTimestamps[timestamp].Add(newCommand);
+                commandsByTimestamps[timestamp].Remove(oldCommand);
+                commandsByTimestamps[timestamp].Add(newCommand);
             }
 
             FixCommandOrder(timestamp, oldCommand, newCommand, MarkDone, MarkUndone);
@@ -110,77 +112,77 @@ namespace ToDoList
         {
             if (oldCommand.Action == firstCommand && newCommand.Action == secondCommand)
             {
-                _commandsByTimestamps[timestamp].Remove(oldCommand);
-                _commandsByTimestamps[timestamp].Add(oldCommand);
-                _commandsByTimestamps[timestamp].Add(newCommand);
+                commandsByTimestamps[timestamp].Remove(oldCommand);
+                commandsByTimestamps[timestamp].Add(oldCommand);
+                commandsByTimestamps[timestamp].Add(newCommand);
             }
             else if (oldCommand.Action == secondCommand && newCommand.Action == firstCommand)
             {
-                _commandsByTimestamps[timestamp].Remove(oldCommand);
-                _commandsByTimestamps[timestamp].Add(newCommand);
-                _commandsByTimestamps[timestamp].Add(oldCommand);
+                commandsByTimestamps[timestamp].Remove(oldCommand);
+                commandsByTimestamps[timestamp].Add(newCommand);
+                commandsByTimestamps[timestamp].Add(oldCommand);
             }
         }
 
         private void AddEntry(int entryId, string name)
         {
-            if (_notes.ContainsKey(entryId))
+            if (notes.ContainsKey(entryId))
             {
-                _removedNotes.Remove(entryId);
-                _notes[entryId] = new Entry(entryId, name, _notes[entryId].State);
+                removedNotes.Remove(entryId);
+                notes[entryId] = new Entry(entryId, name, notes[entryId].State);
             }
             else
             {
-                _notes.Add(entryId, new Entry(entryId, name, EntryState.Undone));
+                notes.Add(entryId, new Entry(entryId, name, EntryState.Undone));
             }
         }
 
         private void RemoveEntry(int entryId, string _)
         {
-            if (_notes.ContainsKey(entryId))
+            if (notes.ContainsKey(entryId))
             {
-                _removedNotes.Add(entryId);
+                removedNotes.Add(entryId);
             }
         }
 
         private void MarkDone(int entryId, string _)
         {
-            if (_notes.ContainsKey(entryId))
+            if (notes.ContainsKey(entryId))
             {
-                _notes[entryId] = _notes[entryId].MarkDone();
+                notes[entryId] = notes[entryId].MarkDone();
             }
             else
             {
-                _notes.Add(entryId, new Entry(entryId, null, EntryState.Done));
+                notes.Add(entryId, new Entry(entryId, null, EntryState.Done));
             }
         }
 
         private void MarkUndone(int entryId, string _)
         {
-            if (_notes.ContainsKey(entryId))
+            if (notes.ContainsKey(entryId))
             {
-                _notes[entryId] = _notes[entryId].MarkUndone();
+                notes[entryId] = notes[entryId].MarkUndone();
             }
             else
             {
-                _notes.Add(entryId, new Entry(entryId, null, EntryState.Undone));
+                notes.Add(entryId, new Entry(entryId, null, EntryState.Undone));
             }
         }
 
         private void UpdateNotes()
         {
-            _notes.Clear();
+            notes.Clear();
 
-            foreach (var commandList in _commandsByTimestamps.Values)
+            foreach (var commandList in commandsByTimestamps.Values)
             {
-                foreach (var command in commandList.Where(command => !_bannedUsers.Contains(command.UserId)))
+                foreach (var command in commandList.Where(command => !bannedUsers.Contains(command.UserId)))
                 {
                     command.Action.Invoke(command.EntryId, command.Text);
                 }
             }
 
-            _notes = _notes
-                .Where(x => x.Value.Name != null && !_removedNotes.Contains(x.Key))
+            notes = notes
+                .Where(x => x.Value.Name != null && !removedNotes.Contains(x.Key))
                 .ToDictionary(x => x.Key, x => x.Value);
         }
     }
