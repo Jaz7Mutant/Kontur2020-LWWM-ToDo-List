@@ -56,10 +56,7 @@ namespace ToDoList
 
         public void AllowUser(int userId)
         {
-            if (bannedUsers.Contains(userId))
-            {
-                bannedUsers.Remove(userId);
-            }
+            bannedUsers.Remove(userId);
         }
 
         public IEnumerator<Entry> GetEnumerator()
