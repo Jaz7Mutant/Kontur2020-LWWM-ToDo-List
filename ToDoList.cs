@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -30,26 +31,22 @@ namespace ToDoList
 
         public void AddEntry(int entryId, int userId, string name, long timestamp)
         {
-            var trackingEntry = GeTrackingEntry(entryId, userId);
-            trackingEntry.AddNameUpdate(new Update<string>(userId, name, timestamp));
-            trackingEntry.AddVisibilityStatusUpdate(new Update<bool>(userId, true, timestamp));
+            GeTrackingEntry(entryId, userId).AddUpdate(new Update(userId, timestamp, name, null, true));
         }
 
         public void RemoveEntry(int entryId, int userId, long timestamp)
         {
-            GeTrackingEntry(entryId, userId).AddVisibilityStatusUpdate(new Update<bool>(userId, false, timestamp));
+            GeTrackingEntry(entryId, userId).AddUpdate(new Update(userId, timestamp, null, null, false));
         }
 
         public void MarkDone(int entryId, int userId, long timestamp)
         {
-           GeTrackingEntry(entryId, userId).AddStateUpdate(
-               new Update<EntryState>(userId, EntryState.Done, timestamp));
+           GeTrackingEntry(entryId, userId).AddUpdate(new Update(userId, timestamp, null, EntryState.Done, null));
         }
 
         public void MarkUndone(int entryId, int userId, long timestamp)
         {
-            GeTrackingEntry(entryId, userId).AddStateUpdate(
-                new Update<EntryState>(userId, EntryState.Undone, timestamp));
+            GeTrackingEntry(entryId, userId).AddUpdate(new Update(userId, timestamp, null, EntryState.Undone, null));
         }
 
         public void DismissUser(int userId)
@@ -71,77 +68,59 @@ namespace ToDoList
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        public class Update<T>
+        public class Update : IComparable<Update>
         {
             public int UserId { get; }
-            public T Value { get; }
             public long Timestamp { get; }
+            public string Name { get; }
+            public EntryState? State { get; }
+            public bool? IsVisible { get; }
 
-            public Update(int userId, T value, long timestamp)
+            public Update(int userId, long timestamp, string newName, EntryState? newState, bool? isVisible)
             {
                 UserId = userId;
-                Value = value;
                 Timestamp = timestamp;
+                Name = newName;
+                State = newState;
+                IsVisible = isVisible;
+            }
+
+            public int CompareTo(Update other)
+            {
+                if (Timestamp != other.Timestamp)
+                    return Timestamp.CompareTo(other.Timestamp);
+
+                if (State != null && other.State != null)
+                    return ((EntryState)other.State).CompareTo((EntryState) State);
+
+                if (IsVisible != null && other.IsVisible != null)
+                    return Name != null && other.Name != null
+                        ? other.UserId.CompareTo(UserId)
+                        : ((bool) other.IsVisible).CompareTo((bool) IsVisible);
+
+                return 1;
             }
         }
 
         public class TrackingEntry
         {
-            private readonly SortedSet<Update<string>> nameUpdates;
-            private readonly SortedSet<Update<EntryState>> stateUpdates;
-            private readonly SortedSet<Update<bool>> visibilityStatusUpdates;
+            private readonly SortedSet<Update> entryUpdates;
             private readonly int entryId;
 
             public TrackingEntry(int entryId)
             {
                 this.entryId = entryId;
-                nameUpdates = new SortedSet<Update<string>>(new NameUpdateComparer());
-                stateUpdates = new SortedSet<Update<EntryState>>(new StateUpdateComparer());
-                visibilityStatusUpdates = new SortedSet<Update<bool>>(new VisibilityStatusUpdateComparer());
+                entryUpdates = new SortedSet<Update>();
             }
 
-            public void AddNameUpdate(Update<string> update) => nameUpdates.Add(update);
-
-            public void AddStateUpdate(Update<EntryState> update) => stateUpdates.Add(update);
-
-            public void AddVisibilityStatusUpdate(Update<bool> update) => visibilityStatusUpdates.Add(update);
+            public void AddUpdate(Update update) => entryUpdates.Add(update);
 
             public Entry GetEntry(HashSet<int> bannedUsers)
             {
-                var name = nameUpdates.LastOrDefault(x => !bannedUsers.Contains(x.UserId))?.Value;
-                var state = stateUpdates.LastOrDefault(x => !bannedUsers.Contains(x.UserId))?.Value ?? EntryState.Undone;
-                var isVisible = visibilityStatusUpdates.LastOrDefault(x => !bannedUsers.Contains(x.UserId))?.Value ?? false;
+                var name = entryUpdates.LastOrDefault(x => x.Name != null && !bannedUsers.Contains(x.UserId))?.Name;
+                var state = entryUpdates.LastOrDefault(x => x.State != null && !bannedUsers.Contains(x.UserId))?.State ?? EntryState.Undone;
+                var isVisible = entryUpdates.LastOrDefault(x => x.IsVisible != null && !bannedUsers.Contains(x.UserId))?.IsVisible ?? false;
                 return isVisible ? new Entry(entryId, name, state) : null;
-            }
-        }
-
-        public class NameUpdateComparer : Comparer<Update<string>>
-        {
-            public override int Compare(Update<string> x, Update<string> y)
-            {
-                if (x == null || y == null) 
-                    return 0;
-                return x.Timestamp != y.Timestamp ? x.Timestamp.CompareTo(y.Timestamp) : y.UserId.CompareTo(x.UserId);
-            }
-        }
-
-        public class VisibilityStatusUpdateComparer : Comparer<Update<bool>>
-        {
-            public override int Compare(Update<bool> x, Update<bool> y)
-            {
-                if (x == null || y == null)
-                    return 0;
-                return x.Timestamp != y.Timestamp ? x.Timestamp.CompareTo(y.Timestamp) : y.Value.CompareTo(x.Value);
-            }
-        }
-
-        public class StateUpdateComparer : Comparer<Update<EntryState>>
-        {
-            public override int Compare(Update<EntryState> x, Update<EntryState> y)
-            {
-                if (x == null || y == null)
-                    return 0;
-                return x.Timestamp != y.Timestamp ? x.Timestamp.CompareTo(y.Timestamp) : x.Value.CompareTo(y.Value);
             }
         }
     }

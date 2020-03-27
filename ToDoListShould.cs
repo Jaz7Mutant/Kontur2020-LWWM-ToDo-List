@@ -223,6 +223,15 @@ namespace ToDoList
         }
 
         [Test]
+        public void Change_Name_By_More_Expirienced_User()
+        {
+            list.AddEntry(32, 10, "DO IT", 100);
+            list.AddEntry(32, 5, "LOLKEK", 100);
+
+            AssertEntries(Entry.Undone(32, "LOLKEK"));
+        }
+
+        [Test]
         public void Allow_Name_Updates()
         {
             list.AddEntry(42, userA, "Introduce autotests", 100);
