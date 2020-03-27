@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -7,46 +6,50 @@ namespace ToDoList
 {
     public class ToDoList : IToDoList
     {
-        private readonly SortedDictionary<long, List<Command>> commandsByTimestamps;
-        private Dictionary<int, Entry> notes;
+        private readonly Dictionary<int, TrackingEntry> entries;
         private readonly HashSet<int> bannedUsers;
-        private readonly HashSet<int> removedNotes;
 
-        public int Count
-        {
-            get
-            {
-                UpdateNotes();
-                return notes.Count;
-            }
-        }
+        public int Count => entries.Values
+            .Select(trackingEntry => trackingEntry.GetEntry(bannedUsers))
+            .Count(entry => entry != null);
 
         public ToDoList()
         {
-            commandsByTimestamps = new SortedDictionary<long, List<Command>>();
-            notes = new Dictionary<int, Entry>();
+            entries = new Dictionary<int, TrackingEntry>();
             bannedUsers = new HashSet<int>();
-            removedNotes = new HashSet<int>();
+        }
+
+        public TrackingEntry GeTrackingEntry(int entryId, int userId)
+        {
+            if (!entries.ContainsKey(entryId))
+            {
+                entries[entryId] = new TrackingEntry(entryId);
+            }
+            return entries[entryId];
         }
 
         public void AddEntry(int entryId, int userId, string name, long timestamp)
         {
-            AddCommand(timestamp, new Command(userId, AddEntry, entryId, name));
+            var trackingEntry = GeTrackingEntry(entryId, userId);
+            trackingEntry.AddNameUpdate(new Update<string>(userId, name, timestamp));
+            trackingEntry.AddVisibilityStatusUpdate(new Update<bool>(userId, true, timestamp));
         }
 
         public void RemoveEntry(int entryId, int userId, long timestamp)
         {
-            AddCommand(timestamp, new Command(userId, RemoveEntry, entryId, null));
+            GeTrackingEntry(entryId, userId).AddVisibilityStatusUpdate(new Update<bool>(userId, false, timestamp));
         }
 
         public void MarkDone(int entryId, int userId, long timestamp)
         {
-            AddCommand(timestamp, new Command(userId, MarkDone, entryId, null));
+           GeTrackingEntry(entryId, userId).AddStateUpdate(
+               new Update<EntryState>(userId, EntryState.Done, timestamp));
         }
 
         public void MarkUndone(int entryId, int userId, long timestamp)
         {
-            AddCommand(timestamp, new Command(userId, MarkUndone, entryId, null));
+            GeTrackingEntry(entryId, userId).AddStateUpdate(
+                new Update<EntryState>(userId, EntryState.Undone, timestamp));
         }
 
         public void DismissUser(int userId)
@@ -61,142 +64,85 @@ namespace ToDoList
 
         public IEnumerator<Entry> GetEnumerator()
         {
-            UpdateNotes();
-            return notes.Values.GetEnumerator();
+            return entries.Values
+                .Select(trackingEntry => trackingEntry.GetEntry(bannedUsers))
+                .Where(entry => entry != null).GetEnumerator();
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        private void AddCommand(long timestamp, Command command)
+        public class Update<T>
         {
-            if (commandsByTimestamps.ContainsKey(timestamp))
+            public int UserId { get; }
+            public T Value { get; }
+            public long Timestamp { get; }
+
+            public Update(int userId, T value, long timestamp)
             {
-                ResolveConflict(timestamp, command);
-            }
-            else
-            {
-                commandsByTimestamps.Add(timestamp, new List<Command> {command});
+                UserId = userId;
+                Value = value;
+                Timestamp = timestamp;
             }
         }
 
-        private void ResolveConflict(long timestamp, Command newCommand)
+        public class TrackingEntry
         {
-            var oldCommand = commandsByTimestamps[timestamp].Last(x => x.EntryId == newCommand.EntryId);
-            if (oldCommand == null)
+            private readonly SortedSet<Update<string>> nameUpdates;
+            private readonly SortedSet<Update<EntryState>> stateUpdates;
+            private readonly SortedSet<Update<bool>> visibilityStatusUpdates;
+            private readonly int entryId;
+
+            public TrackingEntry(int entryId)
             {
-                commandsByTimestamps[timestamp].Add(newCommand);
-                return;
+                this.entryId = entryId;
+                nameUpdates = new SortedSet<Update<string>>(new NameUpdateComparer());
+                stateUpdates = new SortedSet<Update<EntryState>>(new StateUpdateComparer());
+                visibilityStatusUpdates = new SortedSet<Update<bool>>(new VisibilityStatusUpdateComparer());
             }
 
-            if (newCommand.Action == oldCommand.Action && newCommand.UserId < oldCommand.UserId)
-            {
-                commandsByTimestamps[timestamp].Remove(oldCommand);
-                commandsByTimestamps[timestamp].Add(newCommand);
-            }
+            public void AddNameUpdate(Update<string> update) => nameUpdates.Add(update);
 
-            FixCommandOrder(timestamp, oldCommand, newCommand, MarkDone, MarkUndone);
-            FixCommandOrder(timestamp, oldCommand, newCommand, AddEntry, RemoveEntry);
-            FixCommandOrder(timestamp, oldCommand, newCommand, AddEntry, MarkDone);
-            FixCommandOrder(timestamp, oldCommand, newCommand, MarkDone, RemoveEntry);
-        }
+            public void AddStateUpdate(Update<EntryState> update) => stateUpdates.Add(update);
 
-        private void FixCommandOrder(
-            long timestamp,
-            Command oldCommand,
-            Command newCommand,
-            Action<int, string> firstCommand,
-            Action<int, string> secondCommand)
-        {
-            if (oldCommand.Action == firstCommand && newCommand.Action == secondCommand)
+            public void AddVisibilityStatusUpdate(Update<bool> update) => visibilityStatusUpdates.Add(update);
+
+            public Entry GetEntry(HashSet<int> bannedUsers)
             {
-                commandsByTimestamps[timestamp].Remove(oldCommand);
-                commandsByTimestamps[timestamp].Add(oldCommand);
-                commandsByTimestamps[timestamp].Add(newCommand);
-            }
-            else if (oldCommand.Action == secondCommand && newCommand.Action == firstCommand)
-            {
-                commandsByTimestamps[timestamp].Remove(oldCommand);
-                commandsByTimestamps[timestamp].Add(newCommand);
-                commandsByTimestamps[timestamp].Add(oldCommand);
+                var name = nameUpdates.LastOrDefault(x => !bannedUsers.Contains(x.UserId))?.Value;
+                var state = stateUpdates.LastOrDefault(x => !bannedUsers.Contains(x.UserId))?.Value ?? EntryState.Undone;
+                var isVisible = visibilityStatusUpdates.LastOrDefault(x => !bannedUsers.Contains(x.UserId))?.Value ?? false;
+                return isVisible ? new Entry(entryId, name, state) : null;
             }
         }
 
-        private void AddEntry(int entryId, string name)
+        public class NameUpdateComparer : Comparer<Update<string>>
         {
-            if (notes.ContainsKey(entryId))
+            public override int Compare(Update<string> x, Update<string> y)
             {
-                removedNotes.Remove(entryId);
-                notes[entryId] = new Entry(entryId, name, notes[entryId].State);
-            }
-            else
-            {
-                notes.Add(entryId, new Entry(entryId, name, EntryState.Undone));
+                if (x == null || y == null) 
+                    return 0;
+                return x.Timestamp != y.Timestamp ? x.Timestamp.CompareTo(y.Timestamp) : y.UserId.CompareTo(x.UserId);
             }
         }
 
-        private void RemoveEntry(int entryId, string _)
+        public class VisibilityStatusUpdateComparer : Comparer<Update<bool>>
         {
-            if (notes.ContainsKey(entryId))
+            public override int Compare(Update<bool> x, Update<bool> y)
             {
-                removedNotes.Add(entryId);
+                if (x == null || y == null)
+                    return 0;
+                return x.Timestamp != y.Timestamp ? x.Timestamp.CompareTo(y.Timestamp) : y.Value.CompareTo(x.Value);
             }
         }
 
-        private void MarkDone(int entryId, string _)
+        public class StateUpdateComparer : Comparer<Update<EntryState>>
         {
-            if (notes.ContainsKey(entryId))
+            public override int Compare(Update<EntryState> x, Update<EntryState> y)
             {
-                notes[entryId] = notes[entryId].MarkDone();
+                if (x == null || y == null)
+                    return 0;
+                return x.Timestamp != y.Timestamp ? x.Timestamp.CompareTo(y.Timestamp) : x.Value.CompareTo(y.Value);
             }
-            else
-            {
-                notes.Add(entryId, new Entry(entryId, null, EntryState.Done));
-            }
-        }
-
-        private void MarkUndone(int entryId, string _)
-        {
-            if (notes.ContainsKey(entryId))
-            {
-                notes[entryId] = notes[entryId].MarkUndone();
-            }
-            else
-            {
-                notes.Add(entryId, new Entry(entryId, null, EntryState.Undone));
-            }
-        }
-
-        private void UpdateNotes()
-        {
-            notes.Clear();
-
-            foreach (var commandList in commandsByTimestamps.Values)
-            {
-                foreach (var command in commandList.Where(command => !bannedUsers.Contains(command.UserId)))
-                {
-                    command.Action.Invoke(command.EntryId, command.Text);
-                }
-            }
-
-            notes = notes
-                .Where(x => x.Value.Name != null && !removedNotes.Contains(x.Key))
-                .ToDictionary(x => x.Key, x => x.Value);
-        }
-    }
-
-    public class Command
-    {
-        public int UserId;
-        public Action<int, string> Action;
-        public int EntryId;
-        public string Text;
-
-        public Command(int userId, Action<int, string> action, int entryId, string text)
-        {
-            UserId = userId;
-            Action = action;
-            EntryId = entryId;
-            Text = text;
         }
     }
 }
